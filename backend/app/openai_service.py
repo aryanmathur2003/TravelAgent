@@ -63,24 +63,24 @@ async def generate_chat_response(chat_request: ChatRequest):
 
         # The key fix: call openai.Chat.create(...)
         response = openai.chat.completions.create(**params)
-        response = openai.ChatCompletion.create(**params)
+        
 
-        logger.info(f"OpenAI raw response: {response}")  # Add this log
+        # The standard usage is the same: get role/content from the first choice
+        role = response.choices[0].message.role
+        content = response.choices[0].message.content
 
-        if not response["choices"]:
-            return {"role": "assistant", "content": "No response from OpenAI."}
-
-        role = response["choices"][0]["message"].get("role", "assistant")
-        content = response["choices"][0]["message"].get("content", "")
-
-        # Ensure content is not None
-        if content is None:
-            content = "I'm sorry, but I don't have a response to that."
-
-        return {
+        # Build a dictionary with any extra info you want
+        response_dict = {
             "role": role,
             "content": content
         }
+
+        # If your specialized model or deployment returns "tool_calls", handle it here
+        # e.g.:
+        # if hasattr(response.choices[0].message, "tool_calls"):
+        #     response_dict["tool_calls"] = response.choices[0].message.tool_calls
+
+        return response_dict
 
     except OpenAIError as e:
         logger.error(f"OpenAI API error: {str(e)}")
