@@ -255,7 +255,7 @@ async def websocket_endpoint(websocket: WebSocket):
             # Send the response back to the client with a consistent format
             # Make sure we're sending just the content string, not a nested object
             content = response.get("content", "")
-            
+            logger.info(f"Full OpenAI response: {response}")
             # Log what we're sending to help debug
             logger.info(f"Sending message to client: {content[:100]}...")
             
