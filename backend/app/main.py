@@ -4,7 +4,7 @@ import json
 import logging
 from .models import ChatRequest, ChatMessage
 from .openai_service import generate_chat_response
-
+from .custom_tools import get_weather, search_wikipedia, search_flights
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -68,19 +68,41 @@ AVAILABLE_FUNCTIONS = [
                 "required": ["query"]
             }
         }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_flights",
+            "description": "Find the best flight destinations from a given origin within a price range.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "origin": {
+                        "type": "string",
+                        "description": "The IATA code of the departure airport (e.g., 'JFK')."
+                    },
+                    "max_price": {
+                        "type": "integer",
+                        "description": "The maximum price for flights in the preferred currency."
+                    }
+                },
+                "required": ["origin", "max_price"]
+            }
+        }
     }
 ]
 
-# Function implementations
-async def get_weather(location, unit="celsius"):
-    # This would be replaced with actual API call to weather service
-    logger.info(f"Getting weather for {location} in {unit} units")
-    return {
-        "location": location,
-        "temperature": "22" if unit == "celsius" else "72",
-        "unit": unit,
-        "condition": "sunny"
-    }
+
+# # Function implementations
+# async def get_weather(location, unit="celsius"):
+#     # This would be replaced with actual API call to weather service
+#     logger.info(f"Getting weather for {location} in {unit} units")
+#     return {
+#         "location": location,
+#         "temperature": "22" if unit == "celsius" else "72",
+#         "unit": unit,
+#         "condition": "sunny"
+#     }
 
 async def search_web(query):
     # This would be replaced with actual web search API
@@ -96,7 +118,8 @@ async def search_web(query):
 # Map function names to their implementations
 FUNCTION_MAP = {
     "get_weather": get_weather,
-    "search_web": search_web
+    "search_web": search_web,
+    "search_flights": search_flights
 }
 
 
@@ -128,7 +151,7 @@ async def websocket_endpoint(websocket: WebSocket):
             data = await websocket.receive_text()
             data_json = json.loads(data)
             
-            logger.info(f"Received WebSocket message: {data[:100]}...")  # Log the first 100 chars
+            logger.info(f"Received WebSocket message: {data}")  # Log the first 100 chars
             
             # Convert the received data to our models
             messages = []
@@ -257,7 +280,7 @@ async def websocket_endpoint(websocket: WebSocket):
             content = response.get("content", "")
             
             # Log what we're sending to help debug
-            logger.info(f"Sending message to client: {content[:100]}...")
+            logger.info(f"Sending message to client: {content}")
             
             await websocket.send_json({
                 "type": "chat_response",
