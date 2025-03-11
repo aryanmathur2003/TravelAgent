@@ -4,7 +4,8 @@ import json
 import logging
 from .models import ChatRequest, ChatMessage
 from .openai_service import generate_chat_response
-from .custom_tools import search_flights
+from .custom_tools import search_flights, get_flight_availability, get_flight_pricing, book_flight
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -23,81 +24,88 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Define global system prompt
 SYSTEM_PROMPT = """You are a helpful AI assistant that provides structured responses.
 Always format flight search results using the following structure:
 
+- **From:** [Origin Airport] → **To:** [Destination Airport]  
+- **Departure Date:** [Departure Date]  
+- **Price:** $[Price]  
+---
 Ensure clarity and readability in all responses.
 """
-
 
 # Define available functions/tools
 AVAILABLE_FUNCTIONS = [
     {
         "type": "function",
         "function": {
-            "name": "get_weather",
-            "description": "Get the current weather in a given location if the user asks for it.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "location": {
-                        "type": "string",
-                        "description": "The city and state, e.g. San Francisco, CA"
-                    },
-                    "unit": {
-                        "type": "string",
-                        "enum": ["celsius", "fahrenheit"],
-                        "description": "The temperature unit to use"
-                    }
-                },
-                "required": ["location"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "search_web",
-            "description": "Search the web for information on a topic",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "query": {
-                        "type": "string",
-                        "description": "The search query"
-                    }
-                },
-                "required": ["query"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
             "name": "search_flights",
-            "description": "Search for available flights based on user input. Format the response using the predefined structure in SYSTEM_PROMPT.",
+            "description": "Search for available flights based on user input.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "origin": {
-                        "type": "string",
-                        "description": "The IATA code of the departure airport (e.g., 'JFK')."
-                    },
-                    "max_price": {
-                        "type": "integer",
-                        "description": "The maximum price for flights in the preferred currency."
-                    }
+                    "origin": {"type": "string", "description": "Origin airport IATA code (e.g., 'JFK')"},
+                    "destination": {"type": "string", "description": "Destination airport IATA code (e.g., 'LAX')"},
+                    "departure_date": {"type": "string", "description": "Departure date in YYYY-MM-DD format"},
+                    "max_price": {"type": "integer", "description": "Maximum price for flights"}
                 },
-                "required": ["origin", "max_price"]
+                "required": ["origin", "destination", "departure_date", "max_price"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_flight_availability",
+            "description": "Check flight availability using the flight number and date.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "flight_number": {"type": "string", "description": "Flight number (e.g., 'AA100')"},
+                    "date": {"type": "string", "description": "Date of flight (YYYY-MM-DD)"}
+                },
+                "required": ["flight_number", "date"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_flight_pricing",
+            "description": "Retrieve the pricing details of a specific flight.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "flight_id": {"type": "string", "description": "ID of the flight to get pricing"}
+                },
+                "required": ["flight_id"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "book_flight",
+            "description": "Book a flight based on the flight ID and passenger details.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "flight_id": {"type": "string", "description": "Flight ID to book"},
+                    "passenger_name": {"type": "string", "description": "Full name of the passenger"}
+                },
+                "required": ["flight_id", "passenger_name"]
             }
         }
     }
 ]
 
-
 # Map function names to their implementations
 FUNCTION_MAP = {
-    "search_flights": search_flights
+    "search_flights": search_flights,
+    "get_flight_availability": get_flight_availability,
+    "get_flight_pricing": get_flight_pricing,
+    "book_flight": book_flight
 }
 
 
@@ -128,156 +136,100 @@ async def websocket_endpoint(websocket: WebSocket):
         while True:
             data = await websocket.receive_text()
             data_json = json.loads(data)
-            
-            logger.info(f"Received WebSocket message: {data}")  # Log the first 100 chars
-            
-            # Convert the received data to our models
+            logger.info(f"Received WebSocket message: {data}")
+
             messages = []
             for msg in data_json.get("messages", []):
-                # Handle different message structures
                 try:
-                    # Create a dictionary with only the fields that exist in the message
                     message_data = {"role": msg["role"]}
-                    
-                    # Add content if it exists
+
                     if "content" in msg:
-                        # Check if content is a nested dictionary with its own content field
-                        if isinstance(msg["content"], dict) and "content" in msg["content"]:
-                            message_data["content"] = msg["content"]["content"]
-                        else:
-                            message_data["content"] = msg["content"]
-                    else:
-                        message_data["content"] = None
-                    
-                    # Add tool_calls if they exist
+                        message_data["content"] = msg["content"]
+
                     if "tool_calls" in msg:
                         message_data["tool_calls"] = msg["tool_calls"]
-                    
-                    # Add tool_call_id if it exists
+
                     if "tool_call_id" in msg:
                         message_data["tool_call_id"] = msg["tool_call_id"]
-                    
-                    # Create the ChatMessage with the appropriate fields
+
                     chat_message = ChatMessage(**message_data)
                     messages.append(chat_message)
                 except Exception as e:
-                    logger.error(f"Error creating ChatMessage: {str(e)}, message data: {msg}")
+                    logger.error(f"Error creating ChatMessage: {e}, message data: {msg}")
                     raise
-            
+
             # Add system prompt if not already present
             if not any(msg.role == "system" for msg in messages):
                 messages.insert(0, ChatMessage(role="system", content=SYSTEM_PROMPT))
-            
+
             # Create the chat request with tools
             chat_request = ChatRequest(
                 messages=messages,
                 model=data_json.get("model", "gpt-3.5-turbo"),
                 temperature=data_json.get("temperature", 0.7),
-                tools=AVAILABLE_FUNCTIONS  # Add tools to the request
+                tools=AVAILABLE_FUNCTIONS
             )
-            
-            # Log the request being sent to OpenAI
-            logger.info(f"Sending request to OpenAI with tools: {len(AVAILABLE_FUNCTIONS)} tools included")
-            
-            # Send acknowledgment that message was received
+
+            logger.info("Sending request to OpenAI")
+
             await websocket.send_json({
                 "type": "message_received",
                 "message": "Processing your request..."
             })
-            
-            # Generate response from OpenAI
+
             response = await generate_chat_response(chat_request)
-            
-            # Log the raw response for debugging
-            logger.info(f"Raw response from OpenAI: {response}")
-            
-            # Check if the response contains a function call
+
             if response.get("tool_calls"):
-                logger.info(f"Response contains tool calls: {response['tool_calls']}")
-                
-                # Create a new list of messages for the follow-up request
-                follow_up_messages = messages.copy()  # Start with the original messages
-                
-                # Add the assistant response with tool_calls
-                assistant_message_dict = {
-                    "role": "assistant",
-                    "content": response.get("content"),
-                    "tool_calls": response.get("tool_calls")
-                }
-                follow_up_messages.append(ChatMessage(**assistant_message_dict))
-                
-                # Process each tool call
                 for tool_call in response.get("tool_calls", []):
                     try:
                         function_name = tool_call["function"]["name"]
                         function_args = json.loads(tool_call["function"]["arguments"])
-                        
-                        logger.info(f"Executing function: {function_name} with args: {function_args}")
-                        
-                        # Execute the function if it exists in our map
+
                         if function_name in FUNCTION_MAP:
                             function_response = await FUNCTION_MAP[function_name](**function_args)
-                            
-                            # Add the tool response
+
                             tool_message_dict = {
                                 "role": "tool",
                                 "content": json.dumps(function_response),
                                 "tool_call_id": tool_call["id"]
                             }
-                            follow_up_messages.append(ChatMessage(**tool_message_dict))
+                            messages.append(ChatMessage(**tool_message_dict))
+
                     except Exception as e:
                         logger.error(f"Error executing function {function_name}: {str(e)}")
-                        # Add an error message as the tool response
                         tool_message_dict = {
                             "role": "tool",
                             "content": json.dumps({"error": str(e)}),
                             "tool_call_id": tool_call["id"]
                         }
-                        follow_up_messages.append(ChatMessage(**tool_message_dict))
-                
-                # Add system prompt if not already present
-                if not any(msg.role == "system" for msg in follow_up_messages):
-                    follow_up_messages.insert(0, ChatMessage(role="system", content=SYSTEM_PROMPT))
-                    logger.info("********* SYSTEM IS INSTERTED AND FOLLOW UP IS RUN")
-                logger.info(f"********* FOLLOW UP IS RUN {follow_up_messages}")
-                # Create a new request with the updated messages
+                        messages.append(ChatMessage(**tool_message_dict))
+
                 follow_up_request = ChatRequest(
-                    messages=follow_up_messages,
+                    messages=messages,
                     model=chat_request.model,
                     temperature=chat_request.temperature,
                     tools=chat_request.tools
                 )
-                
-                # Get a new response with the function results
+
                 try:
-                    logger.info("Sending follow-up request with tool results")
                     response = await generate_chat_response(follow_up_request)
                 except Exception as e:
-                    logger.error(f"Error getting final response after tool calls: {str(e)}")
-                    response = {"content": f"I'm sorry, I encountered an error processing your request. {str(e)}"}
-            
-            logger.info("Sending response back to client")
-            
-            # Send the response back to the client with a consistent format
-            # Make sure we're sending just the content string, not a nested object
-            content = response.get("content", "")
-            
-            # Log what we're sending to help debug
-            logger.info(f"Sending message to client: {content}")
-            
+                    logger.error(f"Error getting final response: {e}")
+                    response = {"content": f"Error processing request: {e}"}
+
             await websocket.send_json({
                 "type": "chat_response",
-                "message": content,  # Send just the content string
+                "message": response.get("content", ""),
                 "role": "assistant"
             })
-            
+
     except WebSocketDisconnect:
         logger.info("WebSocket disconnected")
         manager.disconnect(websocket)
     except Exception as e:
-        logger.error(f"Error in WebSocket handler: {str(e)}", exc_info=True)
+        logger.error(f"Error in WebSocket handler: {e}", exc_info=True)
 
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=True) 
+    uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=True)
