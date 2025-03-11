@@ -8,6 +8,7 @@ import os
 from dotenv import load_dotenv
 import logging
 import requests
+# import amadeus
 
 logger = logging.getLogger(__name__)
 
