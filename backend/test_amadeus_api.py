@@ -1,41 +1,53 @@
+import os
+import aiohttp
+import asyncio
 import requests
+import ssl
+import certifi
+from dotenv import load_dotenv
 
-AUTH_ENDPOINT = "https://test.api.amadeus.com/v1/security/oauth2/token"
-FLIGHT_SEARCH_URL = "https://test.api.amadeus.com/v1/shopping/flight-destinations"
+# Load environment variables
+load_dotenv('.env')
 
 # Amadeus API Credentials
-AMADEUS_API_KEY = "BALQTVgsAkj8XI4QHAOyTbzytNYBeCtJ"
-AMADEUS_API_SECRET = "z7WXrJh8ca53gY1r"
+AUTH_ENDPOINT = "https://test.api.amadeus.com/v1/security/oauth2/token"
+FLIGHT_SEARCH_URL = "https://test.api.amadeus.com/v2/reference-data/urls/checkin-links"
 
-# 1️⃣ Get Access Token
-def get_access_token():
-    headers = {"Content-Type": "application/x-www-form-urlencoded"}
-    data = {
-        "grant_type": "client_credentials",
-        "client_id": AMADEUS_API_KEY,
-        "client_secret": AMADEUS_API_SECRET
-    }
-    response = requests.post(AUTH_ENDPOINT, headers=headers, data=data)
-    return response.json().get("access_token")
+# Get Amadeus API credentials from environment variables
+data = {
+    "grant_type": "client_credentials",
+    "client_id": os.getenv('AMADEUS_API_KEY'),
+    "client_secret": os.getenv('AMADEUS_API_SECRET')
+}
 
-# 2️⃣ Search for Flights
-def search_flights(origin, max_price):
-    token = get_access_token()
-    if not token:
-        print("❌ Failed to get access token.")
-        return
+# Request access token
+response = requests.post(AUTH_ENDPOINT, headers={"Content-Type": "application/x-www-form-urlencoded"}, data=data)
+response.raise_for_status()  # Raise exception if request fails
+access_token = response.json().get('access_token')
 
-    headers = {"Authorization": f"Bearer {token}"}
-    params = {"origin": origin, "maxPrice": str(max_price)}
+if not access_token:
+    raise Exception("Failed to get access token from Amadeus API")
 
-    response = requests.get(FLIGHT_SEARCH_URL, headers=headers, params=params, verify=False)
+# Create SSL context using certifi to handle SSL verification
+ssl_context = ssl.create_default_context(cafile=certifi.where())
 
-    if response.status_code == 200:
-        print("✅ Flight search successful!")
-        print(response.json())
-    else:
-        print(f"❌ Flight search failed: {response.json()}")
+async def main():
+    headers = {'Authorization': f'Bearer {access_token}'}
+    parameters = {"airlineCode": 'BA'}  # Example for British Airways
 
-# 3️⃣ Run Test
+    async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=ssl_context)) as session:
+        for number in range(20):
+            async with session.get(
+                FLIGHT_SEARCH_URL,
+                params=parameters,
+                headers=headers
+            ) as resp:
+                if resp.status == 200:
+                    flights = await resp.json()
+                    print(f"Flight {number + 1}: {flights}")
+                else:
+                    print(f"Failed to fetch flight {number + 1}: {resp.status}")
+
+# Run the async function
 if __name__ == "__main__":
-    search_flights("ORD", 1000)
+    asyncio.run(main())

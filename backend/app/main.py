@@ -4,7 +4,7 @@ import json
 import logging
 from .models import ChatRequest, ChatMessage
 from .openai_service import generate_chat_response
-from .custom_tools import get_weather, search_wikipedia, search_flights
+from .custom_tools import search_flights
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -23,10 +23,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Define global system prompt
-SYSTEM_PROMPT = """You are a helpful AI assistant. You can answer questions, provide information, 
-and help with various tasks. If you don't know the answer to something, just say so instead of making up information.
-You can use tools when appropriate to fulfill user requests."""
+SYSTEM_PROMPT = """You are a helpful AI assistant that provides structured responses.
+Always format flight search results using the following structure:
+
+Ensure clarity and readability in all responses.
+"""
+
 
 # Define available functions/tools
 AVAILABLE_FUNCTIONS = [
@@ -73,7 +75,7 @@ AVAILABLE_FUNCTIONS = [
         "type": "function",
         "function": {
             "name": "search_flights",
-            "description": "Find the best flight destinations from a given origin within a price range.",
+            "description": "Search for available flights based on user input. Format the response using the predefined structure in SYSTEM_PROMPT.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -93,32 +95,8 @@ AVAILABLE_FUNCTIONS = [
 ]
 
 
-# # Function implementations
-# async def get_weather(location, unit="celsius"):
-#     # This would be replaced with actual API call to weather service
-#     logger.info(f"Getting weather for {location} in {unit} units")
-#     return {
-#         "location": location,
-#         "temperature": "22" if unit == "celsius" else "72",
-#         "unit": unit,
-#         "condition": "sunny"
-#     }
-
-async def search_web(query):
-    # This would be replaced with actual web search API
-    logger.info(f"Searching web for: {query}")
-    return {
-        "query": query,
-        "results": [
-            {"title": "Example result 1", "snippet": "This is an example search result."},
-            {"title": "Example result 2", "snippet": "Another example search result."}
-        ]
-    }
-
 # Map function names to their implementations
 FUNCTION_MAP = {
-    "get_weather": get_weather,
-    "search_web": search_web,
     "search_flights": search_flights
 }
 
@@ -257,6 +235,11 @@ async def websocket_endpoint(websocket: WebSocket):
                         }
                         follow_up_messages.append(ChatMessage(**tool_message_dict))
                 
+                # Add system prompt if not already present
+                if not any(msg.role == "system" for msg in follow_up_messages):
+                    follow_up_messages.insert(0, ChatMessage(role="system", content=SYSTEM_PROMPT))
+                    logger.info("********* SYSTEM IS INSTERTED AND FOLLOW UP IS RUN")
+                logger.info(f"********* FOLLOW UP IS RUN {follow_up_messages}")
                 # Create a new request with the updated messages
                 follow_up_request = ChatRequest(
                     messages=follow_up_messages,
