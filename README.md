@@ -29,6 +29,4 @@ To run the server, navigate to /backend and run:
 uvicorn app.main:app --reload
 ```
 
-Example Testing: 
-
 
